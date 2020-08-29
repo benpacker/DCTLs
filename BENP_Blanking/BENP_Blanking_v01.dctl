@@ -1,0 +1,23 @@
+DEFINE_UI_PARAMS(ratio, Ratio, DCTLUI_SLIDER_FLOAT, 2.39, 0.0, 5.0, 0.01)
+DEFINE_UI_PARAMS(r, Red, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(g, Green, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(b, Blue, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.1)
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{  
+   float cropped_width = p_Height * ratio;
+   float cropped_height = p_Width / ratio;
+   float blanking_height = (p_Height - cropped_height) / 2 ;
+   float blanking_width = (p_Width - cropped_width) / 2 ;
+   int size_height = round(blanking_height);
+   int size_width = round(blanking_width);
+   if ((p_X < size_width) || (p_X > p_Width-size_width)) {
+      return (make_float3(r, g, b));
+   } else if ((p_Y < size_height) || (p_Y > p_Height-size_height)) {
+      return (make_float3(r, g, b));
+   } else {
+          return (make_float3(p_R, p_G, p_B));
+   }      
+}
+
+

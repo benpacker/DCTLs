@@ -1,0 +1,65 @@
+// copyright Benjamin Packer 2020 benpacker.xyz
+// additional code from Paul Dore, https://github.com/baldavenger/ACES_DCTL
+
+DEFINE_UI_PARAMS(cs_input, Input Colour Space, DCTLUI_COMBO_BOX, 0, { in_ACES }, { ACEScct - BYPASS })
+DEFINE_UI_PARAMS(mid_grey, Tone Split, DCTLUI_SLIDER_FLOAT, 0.435, 0, 1, 0.001)
+DEFINE_UI_PARAMS(tone_str, Tone Strength, DCTLUI_SLIDER_FLOAT, 1, 0, 2, 0.001)
+DEFINE_UI_PARAMS(tone_select, Tone Profile, DCTLUI_COMBO_BOX, 0, { t001 }, { T001 })
+DEFINE_UI_PARAMS(look_str, Look Strength, DCTLUI_SLIDER_FLOAT, 1, 0, 3, 0.001)
+DEFINE_UI_PARAMS(look_select, Look Profile, DCTLUI_COMBO_BOX, 0, { l001 }, { L001 })
+DEFINE_UI_PARAMS(skin_r, Skin Target R, DCTLUI_SLIDER_FLOAT, 113, 0, 255, 1)
+DEFINE_UI_PARAMS(skin_g, Skin Target G, DCTLUI_SLIDER_FLOAT, 109, 0, 255, 1)
+DEFINE_UI_PARAMS(skin_b, Skin Target B, DCTLUI_SLIDER_FLOAT, 103, 0, 255, 1)
+DEFINE_UI_PARAMS(skin_str, Skin Bypass, DCTLUI_SLIDER_FLOAT, 0, 0, 1, 0.001)
+DEFINE_UI_PARAMS(skin_show, Show Skin Matte, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(cs_output, Output Colour Space, DCTLUI_COMBO_BOX, 1, { ot_ACES, ot_rec709 }, { ACEScct - BYPASS, Rec709 Gamma 2.4 })
+
+// #include "ACES_LIB.h"
+#include "BENP_ACES_lib.h"
+#include "BENP_ACES_Tones.h"
+#include "BENP_ACES_Looks.h"
+
+  __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+  {
+    float3 ipt = make_float3(p_R, p_G, p_B);
+
+    float3 pre_rgb;
+    if (cs_input == in_ACES) pre_rgb = ipt;
+    // if (cs_input == in_ARRI) pre_rgb =
+    // if (cs_input == in_RED) pre_rgb =
+    // if (cs_input == in_SONY) pre_rgb =
+
+    float3 look_rgb;
+    if (look_select == l001) look_rgb = (look_str * look_001(pre_rgb)) + (pre_rgb * ( 1 - look_str));
+
+
+    float3 tone_rgb;
+    if (tone_select == t001) tone_rgb = (tone_str * tone_001(look_rgb, mid_grey)) + (look_rgb * ( 1 - tone_str));
+
+
+    float3 skin_rgb;
+    float3 skin_target = make_float3((skin_r / 255), (skin_g / 255), (skin_b / 255));
+    float skin_alpha = skin_bypass(pre_rgb, skin_target, skin_str) * skin_str;
+    skin_rgb = ((skin_alpha * pre_rgb) + (tone_rgb * ( 1 - skin_alpha)));
+
+    float3 post_rgb;
+    if (cs_output == ot_ACES) post_rgb = skin_rgb;
+    if (cs_output == ot_rec709) post_rgb = skin_rgb;
+
+
+    // float3 aces = skin_rgb;
+    // if (cs_output == ot_ACES) { aces = aces; }
+    // if (cs_output == ot_rec709) {
+    //   aces = ACEScct_to_ACES(aces);
+    //   aces = RRT(aces);
+    //   aces = ODT_Rec709_100nits_dim(aces);
+    //   }
+
+
+
+
+
+    if (skin_show == 1) {post_rgb = skin_alpha;}
+
+    return post_rgb;
+  }

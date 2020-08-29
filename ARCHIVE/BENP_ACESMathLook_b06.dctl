@@ -1,0 +1,576 @@
+// copyright Benjamin Packer 2020 benpacker.xyz
+
+DEFINE_UI_PARAMS(cs_input, Input Colour Space, DCTLUI_COMBO_BOX, 0, { in_ACES }, { ACEScct - BYPASS })
+DEFINE_UI_PARAMS(mid_grey, Mid Grey, DCTLUI_SLIDER_FLOAT, 0.435, 0, 1, 0.001)
+DEFINE_UI_PARAMS(tone_str, Tone Strength, DCTLUI_SLIDER_FLOAT, 1, 0, 2, 0.001)
+DEFINE_UI_PARAMS(tone_select, Tone Profile, DCTLUI_COMBO_BOX, 0, { t001 }, { T001 })
+DEFINE_UI_PARAMS(look_str, Look Strength, DCTLUI_SLIDER_FLOAT, 1, 0, 2, 0.001)
+DEFINE_UI_PARAMS(look_select, Look Profile, DCTLUI_COMBO_BOX, 0, { l001 }, { L001 })
+DEFINE_UI_PARAMS(skin_r, Skin Target R, DCTLUI_SLIDER_FLOAT, 113, 0, 255, 1)
+DEFINE_UI_PARAMS(skin_g, Skin Target G, DCTLUI_SLIDER_FLOAT, 109, 0, 255, 1)
+DEFINE_UI_PARAMS(skin_b, Skin Target B, DCTLUI_SLIDER_FLOAT, 103, 0, 255, 1)
+DEFINE_UI_PARAMS(skin_str, Skin Bypass, DCTLUI_SLIDER_FLOAT, 0, 0, 1, 0.001)
+DEFINE_UI_PARAMS(skin_show, Show Skin Matte, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(cs_output, Output Colour Space, DCTLUI_COMBO_BOX, 0, { ot_ACES }, { ACEScct - BYPASS })
+
+
+// DEFINE CONSTANTS
+  __CONSTANT__ float pie = 3.14159265358979323f;
+  __CONSTANT__ float e = 2.718281828459045f;
+
+
+// DECLARE COLOURSPACE CONVERSIONS
+  __DEVICE__ float3 rgb_2_yab(float3 rgb);
+  __DEVICE__ float3 yab_2_ych(float3 yab);
+  __DEVICE__ float3 rgb_2_ych(float3 rgb);
+  __DEVICE__ float3 yab_2_rgb(float3 yab);
+  __DEVICE__ float3 ych_2_rgb(float3 ych);
+  __DEVICE__ float3 ych_2_yab(float3 ych);
+  __DEVICE__ float3 rgb_2_hsv(float3 rgb);
+  __DEVICE__ float3 hsv_2_rgb(float3 hsv);
+
+  __DEVICE__ float3 ARRI_2_ACEScct(float3 rgb);
+  __DEVICE__ float3 RED_2_ACEScct(float3 rgb);
+  __DEVICE__ float3 SONY_2_ACEScct(float3 rgb);
+  __DEVICE__ float3 ACEScct_2_ARRI(float3 rgb);
+  __DEVICE__ float3 ACEScct_2_RED(float3 rgb);
+  __DEVICE__ float3 ACEScct_2_SONY(float3 rgb);
+
+
+// DECLARE SELECTIVE SHAPER TOOLS
+  __DEVICE__ float center_hue(float hue, float centerH);
+  __DEVICE__ float uncenter_hue(float hueCentered, float centerH);
+  __DEVICE__ float cubic_basis_shaper(float x, float w);
+  __DEVICE__ float gaussian_shaper(float x, float target, float w);
+  __DEVICE__ float sigmoid_shaper(float x, float target, float w);
+
+
+// DEFINE COLOURSPACE CONVERSIONS
+  __DEVICE__ float3 rgb_2_yab(float3 rgb) {
+    float3 yab;
+    yab.x = (rgb.x * 0.333333f) + (rgb.y * 0.333333f) + (rgb.z * 0.333333f);
+    yab.y = (rgb.x * 0.5f) + (rgb.y * -0.25f) + (rgb.z * -0.25f);
+    yab.z = (rgb.x * 0.0f) + (rgb.y * 0.433013f) + (rgb.z * -0.433013f);
+    return yab;
+  }
+
+  __DEVICE__ float3 yab_2_ych(float3 yab) {
+    float3 ych;
+    ych.x = yab.x;
+    ych.y = _sqrtf( yab.y * yab.y + yab.z * yab.z );
+    ych.z = _atan2f(yab.z, yab.y) * (180.0f / pie);
+    if (ych.z < 0.0f) ych.z += 360.0f;
+    return ych;
+  }
+
+  __DEVICE__ float3 rgb_2_ych(float3 rgb) {
+    float3 yab;
+    yab.x = (rgb.x * 0.333333f) + (rgb.y * 0.333333f) + (rgb.z * 0.333333f);
+    yab.y = (rgb.x * 0.5f) + (rgb.y * -0.25f) + (rgb.z * -0.25f);
+    yab.z = (rgb.x * 0.0f) + (rgb.y * 0.433013f) + (rgb.z * -0.433013f);
+    float3 ych;
+    ych.x = yab.x;
+    ych.y = _sqrtf( yab.y * yab.y + yab.z * yab.z );
+    ych.z = _atan2f(yab.z, yab.y) * (180.0f / pie);
+    if (ych.z < 0.0f) ych.z += 360.0f;
+    return ych;
+  }
+
+  __DEVICE__ float3 ych_2_yab(float3 ych) {
+    float3 yab;
+    yab.x = ych.x;
+    yab.y = ych.y * _cosf(ych.z * (pie / 180.0f));
+    yab.z = ych.y * _sinf(ych.z * (pie / 180.0f));
+    return yab;
+  }
+
+  __DEVICE__ float3 yab_2_rgb(float3 yab) {
+    float3 rgb;
+    rgb.x = (yab.x * 1.0f) + (yab.y * 1.333333f) + (yab.z * 0.0f);
+    rgb.y = (yab.x * 1.0f) + (yab.y * -0.666666f) + (yab.z * 1.154701f);
+    rgb.z = (yab.x * 1.0f) + (yab.y * -0.666666f) + (yab.z * -1.154701f);
+    return rgb;
+  }
+
+  __DEVICE__ float3 ych_2_rgb(float3 ych) {
+    float3 yab;
+    yab.x = ych.x;
+    yab.y = ych.y * _cosf(ych.z * (pie / 180.0f));
+    yab.z = ych.y * _sinf(ych.z * (pie / 180.0f));
+    float3 rgb;
+    rgb.x = (yab.x * 1.0f) + (yab.y * 1.333333f) + (yab.z * 0.0f);
+    rgb.y = (yab.x * 1.0f) + (yab.y * -0.666666f) + (yab.z * 1.154701f);
+    rgb.z = (yab.x * 1.0f) + (yab.y * -0.666666f) + (yab.z * -1.154701f);
+    return rgb;
+  }
+
+  __DEVICE__ float3 rgb_2_hsv(float3 rgb) {
+    float min = _fminf(_fminf(rgb.x, rgb.y), rgb.z);
+    float max = _fmaxf(_fmaxf(rgb.x, rgb.y), rgb.z);
+    float delta = max - min;
+    float HH;
+    float SS;
+    float VV;
+    if (delta == 0.f) {
+      HH = 0.f;
+    } else if (rgb.x == max) {
+      HH = (rgb.y - rgb.z) / delta;
+    } else if (rgb.y == max) {
+      HH = 2 + (rgb.z - rgb.x) / delta;
+    } else {
+      HH = 4 + (rgb.x - rgb.y) / delta;
+    }
+    HH *= 1.0f / 6.;
+    if (HH < 0) {
+      HH += 1.0f;
+    }
+    if (max != 0.) {
+      SS = delta / max;
+    } else {
+      SS = 0.f;
+    }
+    VV = max;
+
+    float3 hsv = make_float3(HH, SS, VV);
+    return hsv;
+  }
+
+  __DEVICE__ float3 hsv_2_rgb(float3 hsv) {
+    float3 rgb;
+    if (hsv.y == 0.0f) {
+      rgb.x = rgb.y = rgb.z = hsv.z;
+      return rgb;
+    }
+    hsv.x *= 6.0f;
+    int i = _floor(hsv.x);
+    float f = hsv.x - i;
+    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+    float p = hsv.z * (1.0f - hsv.y);
+    float q = hsv.z * (1.0f - hsv.y * f);
+    float t = hsv.z * (1.0f - hsv.y * (1.0f - f));
+    rgb.x = i == 0 ? hsv.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : hsv.z;
+    rgb.y = i == 0 ? t : i == 1 ? hsv.z : i == 2 ? hsv.z : i == 3 ? q : i == 4 ? p : p;
+    rgb.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? hsv.z : i == 4 ? hsv.z : q;
+    return rgb;
+  }
+
+
+// DEFINE SELECTIVE SHAPER TOOLS
+  __DEVICE__ float center_hue( float hue, float centerH) {
+  float hueCentered = hue - centerH;
+  if (hueCentered < -180.0f) hueCentered = hueCentered + 360.0f;
+  else if (hueCentered > 180.0f) hueCentered = hueCentered - 360.0f;
+  return hueCentered;
+  }
+
+  __DEVICE__ float uncenter_hue( float hueCentered, float centerH) {
+  float hue = hueCentered + centerH;
+  if (hue < 0.0f) hue = hue + 360.0f;
+  else if (hue > 360.0f) hue = hue - 360.0f;
+  return hue;
+  }
+
+  __DEVICE__ float cubic_basis_shaper( float x, float w) {
+  float M[4][4] = { {-1.0f/6.0f, 3.0f/6.0f, -3.0f/6.0f, 1.0f/6.0f}, {3.0f/6.0f, -1.0f, 3.0f/6.0f, 0.0f},
+  {-3.0f/6.0f, 0.0f, 3.0f/6.0f, 0.0f}, {1.0f/6.0f, 4.0f/6.0f, 1.0f/6.0f, 0.0f} };
+  float knots[5] = {-w/2.0f, -w/4.0f, 0.0f, w/4.0f, w/2.0f};
+  float y = 0.0f;
+  if ((x > knots[0]) && (x < knots[4])) {
+  float knot_coord = (x - knots[0]) * 4.0f/w;
+  int j = knot_coord;
+  float t = knot_coord - j;
+  float monomials[4] = { t * t * t, t * t, t, 1.0f };
+  if ( j == 3) {
+  y = monomials[0] * M[0][0] + monomials[1] * M[1][0] + monomials[2] * M[2][0] + monomials[3] * M[3][0];
+  } else if ( j == 2) {
+  y = monomials[0] * M[0][1] + monomials[1] * M[1][1] + monomials[2] * M[2][1] + monomials[3] * M[3][1];
+  } else if ( j == 1) {
+  y = monomials[0] * M[0][2] + monomials[1] * M[1][2] + monomials[2] * M[2][2] + monomials[3] * M[3][2];
+  } else if ( j == 0) {
+  y = monomials[0] * M[0][3] + monomials[1] * M[1][3] + monomials[2] * M[2][3] + monomials[3] * M[3][3];
+  } else {
+  y = 0.0f;
+  }}
+  return y * 3.0f/2.0f;
+  }
+
+  __DEVICE__ float gaussian_shaper( float x, float target, float w) {
+    float base = 1.0f * e;
+    float power = (_powf((x - target), 2.0f)) / (_powf((2.0f * w), 2.0f));
+    float out = _powf(base, -power);
+    return out;
+  }
+
+  __DEVICE__ float sigmoid_shaper( float x, float target, float w) {
+    float out;
+    out = (1 / (1.0f + _powf(e, (-8.9f * w) * (x - target))));
+    return out;
+  }
+
+
+// DEFINE TONES
+  __DEVICE__ float3 tone_001( float3 rgb, float mid_grey ) {
+    float3 ych = rgb_2_ych(rgb);
+    float tone_r = cubic_basis_shaper((ych.x - mid_grey), 1.75f);
+    float tone_g = cubic_basis_shaper((ych.x - mid_grey), 1.3f);
+    float tone_b = cubic_basis_shaper((ych.x - mid_grey), 1.2f);
+    float tone = 1 - (cubic_basis_shaper((ych.x - mid_grey), 0.66f) );
+    float3 toning;
+
+    if (rgb.x > mid_grey) {
+  		toning.x = ((rgb.x - mid_grey) * 0.90f) + mid_grey;
+  	} else {
+  		toning.x = ((rgb.x - mid_grey) * 1.25f) + mid_grey;
+  	}
+  	if (rgb.y > mid_grey) {
+  		toning.y = ((rgb.y - mid_grey) * 0.78f) + mid_grey;
+  	} else {
+  		toning.y = ((rgb.y - mid_grey) * 1.05f) + mid_grey;
+  	}
+  	if (rgb.z > mid_grey) {
+  		toning.z = ((rgb.z - mid_grey) * 0.65f) + mid_grey;
+  	} else {
+  		toning.z = ((rgb.z - mid_grey) * 0.85f) + mid_grey;
+  	}
+
+  	toning.x = (((tone_r * tone) * toning.x) + (rgb.x * ( 1 - (tone_r * tone))));
+  	toning.y = (((tone_g * tone) * toning.y) + (rgb.y * ( 1 - (tone_g * tone))));
+  	toning.z = (((tone_b * tone) * toning.z) + (rgb.z * ( 1 - (tone_b * tone))));
+
+    if (toning.x > mid_grey) {
+      toning.x = ((toning.x - mid_grey) * 0.95f) + mid_grey;
+    } else {
+      toning.x = ((toning.x - mid_grey) * 0.95f) + mid_grey;
+    }
+    if (toning.y > mid_grey) {
+      toning.y = ((toning.y - mid_grey) * 0.95f) + mid_grey;
+    } else {
+      toning.y = ((toning.y - mid_grey) * 0.95f) + mid_grey;
+    }
+    if (toning.z > mid_grey) {
+      toning.z = ((toning.z - mid_grey) * 0.95f) + mid_grey;
+    } else {
+      toning.z = ((toning.z - mid_grey) * 0.95f) + mid_grey;
+    }
+
+    // toning = ((tone * toning) + (rgb * ( 1 - tone)));
+
+    return toning;
+  }
+
+
+// DEFINE LOOKS
+  __DEVICE__ float3 look_001( float3 rgb ) {
+    float3 new_change;
+    float3 target_hue;
+    float3 target_sat;
+    float3 target_val;
+    float cntr_hue;
+    float cntr_tgt;
+    float HH;
+    float SS;
+    float VV;
+
+  // INPUT COLOURSPACES
+    float3 in_rgb = rgb;
+    float3 in_ych = rgb_2_ych(rgb);
+    float3 in_hsv = rgb_2_hsv(rgb);
+
+  // C00 GLOBAL PRECHANGE
+    new_change = in_hsv;
+    new_change.y = new_change.y * 0.85f;
+    float3 C00_rgb = hsv_2_rgb(new_change);
+    float3 C00_ych = rgb_2_ych(C00_rgb);
+    float3 C00_hsv = new_change;
+
+  // C01 RED TWEAK (target, width, change)
+    target_hue = make_float3(0.0f, 280.0f, 356.0f);
+    // target_sat = make_float3(0.0f, 0.0f, 0.0f);
+    // target_val = make_float3(0.0f, 0.0f, 0.0f);
+    cntr_hue = center_hue(in_ych.z, target_hue.x);
+    cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    // SS = gaussian_shaper(pre_hsv.y, target_sat.x, target_sat.y);
+    // VV = gaussian_shaper(pre_hsv.z, target_val.x, target_val.y);
+
+    if (HH > 0.0f) {
+      new_change.x = C00_ych.x - (C00_hsv.y * 0.55f);
+      new_change.y = C00_ych.y * 2.35f;
+      new_change.z = uncenter_hue(((HH * cntr_tgt) + (cntr_hue * ( 1 - HH))), target_hue.x);
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C01_alpha = HH;
+    float3 C01;
+    C01 = (C00_rgb * ( 1 - C01_alpha)) + (C01_alpha * ych_2_rgb(new_change));
+    // C01 = _saturatef(C01);
+
+
+  // C02 YELLOW TWEAK (target, width, change)
+    target_hue = make_float3(60.0f, 180.0f, 85.0f);
+    // target_sat = make_float3(0.0f, 0.0f, 0.0f);
+    target_val = make_float3(0.2f, 0.70f, 0.5f);
+    cntr_hue = center_hue(in_ych.z, target_hue.x);
+    cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    // SS = gaussian_shaper(pre_hsv.y, target_sat.x, target_sat.y);
+    VV = cubic_basis_shaper(target_val.x, target_val.y);
+
+    if (HH > 0.0f) {
+      new_change.x = C00_ych.x - (C00_hsv.y * 0.2f);
+      new_change.y = C00_ych.y * (4.0f + C00_ych.y);
+      new_change.z = uncenter_hue(((HH * cntr_tgt) + (cntr_hue * ( 1 - HH))), target_hue.x);
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C02_alpha = HH * VV;
+    float3 C02;
+    C02 = (C00_rgb * ( 1 - C02_alpha)) + (C02_alpha * ych_2_rgb(new_change));
+    // C02 = _saturatef(C02);
+
+  // C03 GREEN TWEAK (target, width, change)
+    target_hue = make_float3(100.0f, 150.0f, 180.0f);
+    target_sat = make_float3(0.4f, 0.8f, 0.0f);
+    // target_val = make_float3(0.0f, 0.0f, 0.0f);
+    cntr_hue = center_hue(in_ych.z, target_hue.x);
+    cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    SS = sigmoid_shaper(in_ych.x, target_sat.x, target_sat.y);
+    // VV = gaussian_shaper(pre_hsv.z, target_val.x, target_val.y);
+
+    if (HH > 0.0f) {
+      new_change.x = C00_ych.x - (C00_hsv.y * 0.1f);
+      new_change.y = C00_ych.y * (1.65f + C00_ych.y);
+      new_change.z = uncenter_hue(((HH * cntr_tgt) + (cntr_hue * ( 1 - HH))), target_hue.x);
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C03_alpha = HH * SS;
+    float3 C03;
+    C03 = (C00_rgb * ( 1 - C03_alpha)) + (C03_alpha * ych_2_rgb(new_change));
+    // C03 = _saturatef(C03);
+
+  // C04 BLUE TWEAK (target, width, change)
+    target_hue = make_float3(200.0f, 280.0f, 200.0f);
+    target_sat = make_float3(0.5f, 5.0f, 0.0f);
+    // target_val = make_float3(0.0f, 0.0f, 0.0f);
+    cntr_hue = center_hue(in_ych.z, target_hue.x);
+    cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    SS = cubic_basis_shaper(target_sat.x, target_sat.y);
+    // VV = gaussian_shaper(pre_hsv.z, target_val.x, target_val.y);
+
+    if (HH > 0.0f) {
+      new_change.x = C00_ych.x - (C00_hsv.y * 0.35f);
+      new_change.y = C00_ych.y * (1.85f + C00_ych.y);
+      new_change.z = uncenter_hue(((HH * cntr_tgt) + (cntr_hue * ( 1 - HH))), target_hue.x);
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C04_alpha = HH * SS;
+    float3 C04;
+    C04 = (C00_rgb * ( 1 - C04_alpha)) + (C04_alpha * ych_2_rgb(new_change));
+    // C04 = _saturatef(C04);
+
+  // C05 CYAN TWEAK (target, width, change)
+    target_hue = make_float3(180.0f, 100.0f, 170.0f);
+    // target_sat = make_float3(0.0f, 0.0f, 0.0f);
+    // target_val = make_float3(0.0f, 0.0f, 0.0f);
+    cntr_hue = center_hue(in_ych.z, target_hue.x);
+    cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    // SS = gaussian_shaper(pre_hsv.y, target_sat.x, target_sat.y);
+    // VV = gaussian_shaper(pre_hsv.z, target_val.x, target_val.y);
+
+    if (HH > 0.0f) {
+      new_change.x = C00_ych.x - (C00_hsv.y * 0.05f);
+      new_change.y = C00_ych.y * (2.25f + C00_ych.y);
+      new_change.z = uncenter_hue(((HH * cntr_tgt) + (cntr_hue * ( 1 - HH))), target_hue.x);
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C05_alpha = HH;
+    float3 C05;
+    C05 = (C00_rgb * ( 1 - C05_alpha)) + (C05_alpha * ych_2_rgb(new_change));
+    // C05 = _saturatef(C05);
+
+
+  // C06 SHADOWS TWEAK (target, width, change)
+    // target_hue = make_float3(180.0f, 200.0f, 170.0f);
+    // target_sat = make_float3(0.0f, 0.0f, 0.0f);
+    target_val = make_float3(0.2f, 0.2f, 0.1f);
+    // cntr_hue = center_hue(in_ych.z, target_hue.x);
+    // cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    // HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    // SS = gaussian_shaper(pre_hsv.y, target_sat.x, target_sat.y);
+    VV = sigmoid_shaper(in_ych.x, target_val.x, target_val.y);
+
+    if (VV > 0.0f) {
+      new_change.x = C00_ych.x;
+      new_change.y = C00_ych.y;
+      new_change.z = C00_ych.z;
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C06_alpha = VV;
+    float3 C06;
+    C06 = (C00_rgb * ( 1 - C06_alpha)) + (C06_alpha * ych_2_rgb(new_change));
+    // C06 = _saturatef(C06);
+
+
+
+  // C07 HIGHLIGHTS TWEAK (target, width, change)
+    // target_hue = make_float3(180.0f, 200.0f, 170.0f);
+    // target_sat = make_float3(0.0f, 0.0f, 0.0f);
+    target_val = make_float3(0.75f, 0.9f, 0.1f);
+    // cntr_hue = center_hue(in_ych.z, target_hue.x);
+    // cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    // HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    // SS = gaussian_shaper(pre_hsv.y, target_sat.x, target_sat.y);
+    VV = sigmoid_shaper(in_ych.x, target_val.x, target_val.y);
+
+    if (VV > 0.0f) {
+      new_change.x = C00_ych.x;
+      new_change.y = C00_ych.y;
+      new_change.z = C00_ych.z;
+    } else {
+      new_change = C00_ych;
+    }
+
+    float C07_alpha = VV;
+    float3 C07;
+    C07 = (C00_rgb * ( 1 - C07_alpha)) + (C07_alpha * ych_2_rgb(new_change));
+    // C07 = _saturatef(C07);
+
+
+  // OUTPUT AVERAGING
+    float look_alpha = C01_alpha + C02_alpha + C03_alpha + C04_alpha + C05_alpha;
+    new_change = ((C01_alpha * C01) + (C02_alpha * C02) + (C03_alpha * C03) + (C04_alpha * C04) + (C05_alpha * C05)) / look_alpha;
+    new_change = _saturatef(new_change);
+
+
+    float3 look;
+    if (look_alpha != 0.0f) {
+      look = (C00_rgb * ( 1 - look_alpha)) + (look_alpha * new_change);
+    } else {
+      look = C00_rgb;
+    }
+
+
+
+  // FIXES - ZERO AXIS (target, softness, change)
+    target_sat = make_float3(0.0f, 0.4f, 0.5f);
+    float fix_alpha = gaussian_shaper(in_hsv.y, target_sat.x, target_sat.y) + C07_alpha;
+    fix_alpha = _saturatef(fix_alpha - 0.75f);
+    look = (fix_alpha * in_rgb) + (look * ( 1 - fix_alpha));
+
+  // FIXES - GREEN NOISE (target, width, change)
+    target_hue = make_float3(100.0f, 300.0f, 100.0f);
+    target_sat = make_float3(0.25f, 0.9f, 0.0f);
+    // target_val = make_float3(0.0f, 0.0f, 0.0f);
+    cntr_hue = center_hue(in_ych.z, target_hue.x);
+    cntr_tgt = center_hue(in_ych.z, target_hue.z);
+    HH = cubic_basis_shaper(cntr_hue, target_hue.y);
+    SS = cubic_basis_shaper(in_ych.y, target_sat.y);
+    // VV = gaussian_shaper(pre_hsv.z, target_val.x, target_val.y);
+
+    fix_alpha = HH * SS * 0.85f;
+    look = (fix_alpha * ((C00_rgb + in_rgb) / 2)) + (look * ( 1 - fix_alpha));
+
+  // FIXES - HIGH SATURATION
+    // float3 fix = rgb_2_ych(look);
+    // target_sat = make_float3(0.5f, 1.0f, 1.0f);
+    // SS = gaussian_shaper(fix.y, target_sat.x, target_sat.y);
+    //
+    // if (SS > 0.0f) {
+    //   new_change.x = fix.x;
+    //   new_change.y = fix.y * 0.5f;
+    //   new_change.z = fix.z;
+    //   new_change = ych_2_rgb(fix);
+    // } else {
+    //   new_change = look;
+    // }
+    //
+    // fix_alpha = SS;
+    // look = (SS * look) + (look * ( 1 - SS));
+
+
+
+
+  // C99 GLOBAL POSTCHANGE
+    new_change = rgb_2_hsv(look);
+    new_change.y = new_change.y * 0.85f;
+    look = hsv_2_rgb(new_change);
+
+    return look;
+  }
+
+
+// DEFINE SKIN TREATMENT
+  __DEVICE__ float skin_bypass( float3 rgb, float3 target_rgb, float factor ) {
+    float3 pre_ych = rgb_2_ych(rgb);
+    float3 target_ych = rgb_2_ych(target_rgb);
+    float3 pre_hsv = rgb_2_hsv(rgb);
+    float3 target_hsv = rgb_2_hsv(target_rgb);
+    float cntr_hue = center_hue(pre_ych.z, target_ych.z);
+    float HH = cubic_basis_shaper(cntr_hue, (360.0f * factor));
+    float SS = cubic_basis_shaper((pre_hsv.y - (target_hsv.y + 0.05f)), (0.75f * factor));
+    float VV = cubic_basis_shaper((pre_hsv.z - target_hsv.z), (0.75f * factor));
+    float alpha = HH * SS * VV;
+    return alpha;
+  }
+
+
+
+// DCTL EXECUTION
+  __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+  {
+    float3 ipt = make_float3(p_R, p_G, p_B);
+
+    float3 pre_rgb;
+    if (cs_input == in_ACES) pre_rgb = ipt;
+    // if (cs_input == in_ARRI) pre_rgb =
+    // if (cs_input == in_RED) pre_rgb =
+    // if (cs_input == in_SONY) pre_rgb =
+
+    float3 look_rgb;
+    if (look_select == l001) look_rgb = (look_str * look_001(pre_rgb)) + (pre_rgb * ( 1 - look_str));
+
+
+    float3 tone_rgb;
+    if (tone_select == t001) tone_rgb = (tone_str * tone_001(look_rgb, mid_grey)) + (look_rgb * ( 1 - tone_str));
+
+
+
+
+
+
+    // float3 tone_rgb;
+    // if (tone_select == t001) tone_rgb = (tone_str * tone_001(pre_rgb, mid_grey)) + (pre_rgb * ( 1 - tone_str));
+    //
+    //
+    // float3 look_rgb;
+    // if (look_select == l001) look_rgb = (look_str * look_001(tone_rgb)) + (tone_rgb * ( 1 - look_str));
+
+
+    float3 skin_rgb;
+    float3 skin_target = make_float3((skin_r / 255), (skin_g / 255), (skin_b / 255));
+    float skin_alpha = skin_bypass(pre_rgb, skin_target, skin_str) * skin_str;
+    skin_rgb = ((skin_alpha * pre_rgb) + (tone_rgb * ( 1 - skin_alpha)));
+
+    float3 post_rgb;
+    if (cs_output == ot_ACES) post_rgb = skin_rgb;
+    // if (cs_input == ot_ARRI) post_rgb =
+    // if (cs_input == ot_RED) post_rgb =
+    // if (cs_input == ot_SONY) post_rgb =
+
+
+    if (skin_show == 1) {post_rgb = skin_alpha;}
+    return post_rgb;
+  }
