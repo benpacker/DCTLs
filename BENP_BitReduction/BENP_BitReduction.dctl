@@ -1,0 +1,16 @@
+// Per Channel Bit reduction effect
+
+DEFINE_UI_PARAMS(r_bit, R Bit Depth, DCTLUI_SLIDER_FLOAT, 4, 0, 16, 0.001)
+DEFINE_UI_PARAMS(g_bit, G Bit Depth, DCTLUI_SLIDER_FLOAT, 4, 0, 16, 0.001)
+DEFINE_UI_PARAMS(b_bit, B Bit Depth, DCTLUI_SLIDER_FLOAT, 4, 0, 16, 0.001)
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+  float out_r = _round(p_R * _powf(2, r_bit)) / _powf(2, r_bit);
+  float out_g = _round(p_G * _powf(2, g_bit)) / _powf(2, g_bit);
+  float out_b = _round(p_B * _powf(2, b_bit)) / _powf(2, b_bit);
+
+  float3 out_rgb = make_float3(out_r, out_g, out_b);
+  return out_rgb;
+
+}
